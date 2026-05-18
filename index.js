@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { chromium } = require('playwright');
 
-const TOKEN = '8900784629:AAF6stVQep2AFOccsvUtqBxyU5iZknoshB8 ';
+const TOKEN = '8900784629:AAF6stVQep2AFOccsvUtqBxyU5iZknoshB8';
 console.log('Iniciant bot...');
 
 const bot = new TelegramBot(TOKEN, {
