@@ -105,20 +105,31 @@ bot.onText(/\/benzina/, async (msg) => {
 
         const top5 = benzineres.slice(0, 5);
 
+        const escapeHtml = (text) => text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+
+        const buildMapsUrl = (name) =>
+            `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name + ' Palma de Mallorca')}`;
+
         let resposta = '⛽ TOP 5 benzineres més barates\n\n';
 
         top5.forEach((b, index) => {
-
-            resposta +=
-                `${index + 1}. ${b.nom} - ${b.preu}€\n`;
-
+            const url = buildMapsUrl(b.nom);
+            resposta += `${index + 1}. <a href="${url}">${escapeHtml(b.nom)}</a> - ${b.preu}€\n`;
         });
 
         console.log('Enviant resposta...');
 
         await bot.sendMessage(
             chatId,
-            resposta
+            resposta,
+            {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            }
         );
 
         console.log('Resposta enviada');
