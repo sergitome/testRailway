@@ -16,6 +16,8 @@ bot.onText(/\/benzina/, async (msg) => {
 
     console.log('Comanda /benzina rebuda');
 
+    await bot.sendMessage(chatId, 'Processant el llistat de preus...');
+
     try {
 
         console.log('Arrancant navegador...');
@@ -114,7 +116,10 @@ bot.onText(/\/benzina/, async (msg) => {
         const buildMapsUrl = (name) =>
             `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name + ' Palma de Mallorca')}`;
 
-        let resposta = '⛽ TOP 5 benzineres més barates\n\n';
+        const today = new Date();
+        const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+
+        let resposta = `⛽ TOP 5 benzineres més barates - ${formattedDate}\n\n`;
 
         top5.forEach((b, index) => {
             const url = buildMapsUrl(b.nom);
