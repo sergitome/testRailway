@@ -6,14 +6,12 @@ const pendingRequests = new Map();
 
 const FUEL_CONFIG = {
     benzina: {
-        label: 'benzineres',
         title: 'TOP 5 benzineres més barates',
         errorMessage: 'Error obtenint preus de benzina',
         emptyMessage: 'No s’han trobat benzineres',
         path: 'precio-gasolina-95'
     },
     diesel: {
-        label: 'gasoil',
         title: 'TOP 5 gasoil més barats',
         errorMessage: 'Error obtenint preus de diesel',
         emptyMessage: 'No s’han trobat benzineres per a diesel',
@@ -29,7 +27,7 @@ const bot = new TelegramBot(TOKEN, {
 
 console.log('Bot started');
 
-const escapeHtml = (text) => text
+const escapeHtml = (text) => String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -41,6 +39,8 @@ const slugify = (text) => text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+
+const isPostalCode = (text) => /^\d{5}$/.test(text.trim());
 
 const getToday = () => {
     const today = new Date();
@@ -76,6 +76,10 @@ const buildKomparingUrl = (fuelType, town, region) => {
 const buildMapsUrl = (name, town) =>
     `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} ${town}`)}`;
 
+const nominatimHeaders = {
+    'User-Agent': 'testRailwayBot/1.0'
+};
+
 const resolveTownFromCoordinates = async (latitude, longitude) => {
     const url = new URL('https://nominatim.openstreetmap.org/reverse');
     url.searchParams.set('format', 'jsonv2');
@@ -86,9 +90,7 @@ const resolveTownFromCoordinates = async (latitude, longitude) => {
     url.searchParams.set('accept-language', 'ca');
 
     const response = await fetch(url, {
-        headers: {
-            'User-Agent': 'testRailwayBot/1.0'
-        }
+        headers: nominatimHeaders
     });
 
     if (!response.ok) {
@@ -106,7 +108,48 @@ const resolveTownFromCoordinates = async (latitude, longitude) => {
     return { town, region };
 };
 
-const fetchFuelPrices = async (fuelType, url) => {
+const resolveTownFromText = async (rawText) => {
+    const text = rawText.trim();
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('addressdetails', '1');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('accept-language', 'ca');
+    url.searchParams.set('countrycodes', 'es');
+
+    if (isPostalCode(text)) {
+        url.searchParams.set('postalcode', text);
+    } else {
+        url.searchParams.set('q', text);
+    }
+
+    const response = await fetch(url, {
+        headers: nominatimHeaders
+    });
+
+    if (!response.ok) {
+        throw new Error(`Nominatim ha respost amb ${response.status}`);
+    }
+
+    const results = await response.json();
+    const firstResult = results[0];
+
+    if (!firstResult) {
+        throw new Error('No s’ha trobat cap ubicació');
+    }
+
+    const town = extractTown(firstResult.address);
+    const region = extractRegion(firstResult.address);
+
+    if (!town) {
+        throw new Error('No s’ha pogut determinar la població');
+    }
+
+    return { town, region };
+};
+
+const fetchFuelPrices = async (url) => {
     const browser = await chromium.launch({
         headless: true,
         args: [
@@ -129,9 +172,8 @@ const fetchFuelPrices = async (fuelType, url) => {
             timeout: 30000
         });
 
-        return await page.$$eval(
-            'table tbody tr',
-            rows => rows.map(row => {
+        return await page.$$eval('table tbody tr', (rows) =>
+            rows.map((row) => {
                 const cols = row.querySelectorAll('td');
 
                 if (cols.length < 2) {
@@ -158,21 +200,23 @@ const fetchFuelPrices = async (fuelType, url) => {
     }
 };
 
+const getLocationKeyboard = () => ({
+    keyboard: [[{
+        text: 'Compartir ubicació',
+        request_location: true
+    }]],
+    resize_keyboard: true,
+    one_time_keyboard: true
+});
+
 const sendFuelPrompt = async (chatId, fuelType) => {
     pendingRequests.set(chatId, fuelType);
 
     await bot.sendMessage(
         chatId,
-        'Envia la teva ubicació perquè pugui detectar a quina població ets.',
+        'Escriu el teu codi postal, el nom de la població on ets o comparteix la ubicació.',
         {
-            reply_markup: {
-                keyboard: [[{
-                    text: 'Compartir ubicació',
-                    request_location: true
-                }]],
-                resize_keyboard: true,
-                one_time_keyboard: true
-            }
+            reply_markup: getLocationKeyboard()
         }
     );
 };
@@ -188,14 +232,14 @@ const sendFuelPrices = async (chatId, fuelType, town, region) => {
 
     if (requestedUrl) {
         try {
-            benzineres = await fetchFuelPrices(fuelType, requestedUrl);
+            benzineres = await fetchFuelPrices(requestedUrl);
         } catch (error) {
             console.warn(`No s'ha pogut obtenir ${fuelType} per ${town}:`, error.message);
         }
     }
 
     if (benzineres.length === 0) {
-        benzineres = await fetchFuelPrices(fuelType, fallbackUrl);
+        benzineres = await fetchFuelPrices(fallbackUrl);
         usedTown = 'Palma de Mallorca';
         targetUrl = fallbackUrl;
     }
@@ -244,7 +288,11 @@ bot.onText(/\/start|\/help/, async (msg) => {
         '/diesel - Obtenir TOP 5 gasoil\n' +
         '/help - Mostra aquesta llista';
 
-    await bot.sendMessage(chatId, helpMsg);
+    await bot.sendMessage(chatId, helpMsg, {
+        reply_markup: {
+            remove_keyboard: true
+        }
+    });
 });
 
 bot.onText(/(^|\s)\/?benzina(\s|$)/i, async (msg) => {
@@ -285,5 +333,42 @@ bot.on('location', async (msg) => {
                 remove_keyboard: true
             }
         });
+    }
+});
+
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const fuelType = pendingRequests.get(chatId);
+    const text = msg.text?.trim();
+
+    if (!fuelType || !text || msg.location) {
+        return;
+    }
+
+    if (text.startsWith('/')) {
+        return;
+    }
+
+    pendingRequests.delete(chatId);
+
+    await bot.sendMessage(chatId, 'Text rebut. Estic detectant la població i consultant els preus...');
+
+    try {
+        const { town, region } = await resolveTownFromText(text);
+        await sendFuelPrices(chatId, fuelType, town, region);
+    } catch (error) {
+        console.error('================ ERROR TEXT UBICACIO ================');
+        console.error(error);
+        console.error('=====================================================');
+
+        await bot.sendMessage(
+            chatId,
+            'No he pogut identificar aquesta ubicació. Escriu /benzina o /diesel i prova amb un codi postal, una població o la ubicació.',
+            {
+                reply_markup: {
+                    remove_keyboard: true
+                }
+            }
+        );
     }
 });
